@@ -91,5 +91,17 @@ USER.md
 package-lock.json
 .claude/settings.local.json
 
+# SpokeFlow runtime state (generated at startup)
+agents/
+canvas/
+cron/
+devices/
+identity/
+logs/
+credentials/
+openclaw.json
+update-check.json
+workspace/
+
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig
