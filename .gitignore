@@ -92,14 +92,14 @@ package-lock.json
 .claude/settings.local.json
 
 # SpokeFlow runtime state (generated at startup)
-agents/
-canvas/
-cron/
-devices/
-identity/
-logs/
-credentials/
-openclaw.json
+/agents/
+/canvas/
+/cron/
+/devices/
+/identity/
+/logs/
+/credentials/
+/openclaw.json
 update-check.json
 workspace/
 
