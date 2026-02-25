@@ -93,7 +93,28 @@ function withLoopbackBrowserAuth(
   });
 }
 
+/**
+ * Marker for HTTP 4xx/5xx errors returned by the browser control service.
+ * These mean the service IS reachable but rejected the request (e.g. missing
+ * parameters). They must NOT be wrapped with "Can't reach …" messaging so
+ * that the calling LLM sees the real validation error and can self-correct.
+ */
+class BrowserServiceHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "BrowserServiceHttpError";
+    this.status = status;
+  }
+}
+
 function enhanceBrowserFetchError(url: string, err: unknown, timeoutMs: number): Error {
+  // Application-level errors from the service should pass through unmodified
+  // so the LLM sees the real message (e.g. "ref is required") and can retry.
+  if (err instanceof BrowserServiceHttpError) {
+    return err;
+  }
+
   const isLocal = !isAbsoluteHttp(url);
   // Human-facing hint for logs/diagnostics.
   const operatorHint = isLocal
@@ -144,7 +165,7 @@ async function fetchHttpJson<T>(
     const res = await fetch(url, { ...init, signal: ctrl.signal });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(text || `HTTP ${res.status}`);
+      throw new BrowserServiceHttpError(res.status, text || `HTTP ${res.status}`);
     }
     return (await res.json()) as T;
   } finally {
@@ -239,7 +260,7 @@ export async function fetchBrowserJson<T>(
         result.body && typeof result.body === "object" && "error" in result.body
           ? String((result.body as { error?: unknown }).error)
           : `HTTP ${result.status}`;
-      throw new Error(message);
+      throw new BrowserServiceHttpError(result.status, message);
     }
     return result.body as T;
   } catch (err) {
