@@ -172,6 +172,22 @@ export function storeRoleRefsForTarget(opts: {
   });
 }
 
+/**
+ * Read-only access to the global role-refs cache for a given CDP target.
+ * Used by the CDP interactions module to resolve refs without a Playwright Page.
+ */
+export function getRoleRefsForTarget(opts: { cdpUrl: string; targetId: string }): {
+  refs: Record<string, { role: string; name?: string; nth?: number }>;
+  mode?: "role" | "aria";
+  frameSelector?: string;
+} | null {
+  const targetId = opts.targetId.trim();
+  if (!targetId) {
+    return null;
+  }
+  return roleRefsByTarget.get(roleRefsKey(opts.cdpUrl, targetId)) ?? null;
+}
+
 export function restoreRoleRefsForTarget(opts: {
   cdpUrl: string;
   targetId?: string;

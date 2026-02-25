@@ -1,0 +1,17 @@
+{
+  "profile": {
+    "info_cache": {
+      "Default": {
+        "name": "openclaw",
+        "shortcut_name": "openclaw",
+        "user_name": "openclaw",
+        "profile_color": "#FF4500",
+        "user_color": "#FF4500",
+        "profile_color_seed": -47872,
+        "profile_highlight_color": -47872,
+        "default_avatar_fill_color": -47872,
+        "default_avatar_stroke_color": -47872
+      }
+    }
+  }
+}

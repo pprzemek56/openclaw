@@ -1,3 +1,12 @@
+import {
+  canUseCdpInteractions,
+  clickViaCdp,
+  hoverViaCdp,
+  isRefValidationError,
+  pressKeyViaCdp,
+  scrollIntoViewViaCdp,
+  typeViaCdp,
+} from "../cdp-interactions.js";
 import type { BrowserFormField } from "../client-actions-core.js";
 import type { BrowserRouteContext } from "../server-context.js";
 import {
@@ -8,8 +17,10 @@ import {
 } from "./agent.act.shared.js";
 import {
   readBody,
+  requirePwAi,
   resolveTargetIdFromBody,
   withPlaywrightRouteContext,
+  withRouteTabContext,
   SELECTOR_UNSUPPORTED_MESSAGE,
 } from "./agent.shared.js";
 import {
@@ -62,16 +73,31 @@ export function registerBrowserAgentActRoutes(
       return jsonError(res, 400, SELECTOR_UNSUPPORTED_MESSAGE);
     }
 
-    await withPlaywrightRouteContext({
+    await withRouteTabContext({
       req,
       res,
       ctx,
       targetId,
-      feature: `act:${kind}`,
-      run: async ({ cdpUrl, tab, pw }) => {
+      run: async ({ profileCtx, tab, cdpUrl }) => {
         const evaluateEnabled = ctx.state().resolved.evaluateEnabled;
+        const useCdp =
+          canUseCdpInteractions({
+            wsUrl: tab.wsUrl,
+            cdpIsLoopback: profileCtx.profile.cdpIsLoopback,
+            driver: profileCtx.profile.driver,
+          }) && Boolean(tab.wsUrl);
+
+        // Lazy Playwright loader – only resolved when the CDP path is skipped or fails.
+        let _pw: Awaited<ReturnType<typeof requirePwAi>> | undefined;
+        const getPw = async () => {
+          if (_pw === undefined) {
+            _pw = await requirePwAi(res, `act:${kind}`);
+          }
+          return _pw;
+        };
 
         switch (kind) {
+          // ── CDP-accelerated actions ────────────────────────────────────
           case "click": {
             const ref = toStringOrEmpty(body.ref);
             if (!ref) {
@@ -84,13 +110,38 @@ export function registerBrowserAgentActRoutes(
             if (buttonRaw && !button) {
               return jsonError(res, 400, "button must be left|right|middle");
             }
-
             const modifiersRaw = toStringArray(body.modifiers) ?? [];
             const parsedModifiers = parseClickModifiers(modifiersRaw);
             if (parsedModifiers.error) {
               return jsonError(res, 400, parsedModifiers.error);
             }
             const modifiers = parsedModifiers.modifiers;
+
+            // CDP fast path
+            if (useCdp) {
+              try {
+                await clickViaCdp({
+                  wsUrl: tab.wsUrl!,
+                  ref,
+                  cdpUrl,
+                  targetId: tab.targetId,
+                  doubleClick,
+                  button,
+                  modifiers,
+                });
+                return res.json({ ok: true, targetId: tab.targetId, url: tab.url });
+              } catch (err) {
+                if (isRefValidationError(err)) {
+                  throw err;
+                }
+                // CDP failed → Playwright fallback
+              }
+            }
+
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             const clickRequest: Parameters<typeof pw.clickViaPlaywright>[0] = {
               cdpUrl,
               targetId: tab.targetId,
@@ -121,6 +172,31 @@ export function registerBrowserAgentActRoutes(
             const submit = toBoolean(body.submit) ?? false;
             const slowly = toBoolean(body.slowly) ?? false;
             const timeoutMs = toNumber(body.timeoutMs);
+
+            // CDP fast path
+            if (useCdp) {
+              try {
+                await typeViaCdp({
+                  wsUrl: tab.wsUrl!,
+                  ref,
+                  cdpUrl,
+                  targetId: tab.targetId,
+                  text,
+                  submit,
+                  slowly,
+                });
+                return res.json({ ok: true, targetId: tab.targetId });
+              } catch (err) {
+                if (isRefValidationError(err)) {
+                  throw err;
+                }
+              }
+            }
+
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             const typeRequest: Parameters<typeof pw.typeViaPlaywright>[0] = {
               cdpUrl,
               targetId: tab.targetId,
@@ -141,6 +217,25 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "key is required");
             }
             const delayMs = toNumber(body.delayMs);
+
+            // CDP fast path
+            if (useCdp) {
+              try {
+                await pressKeyViaCdp({
+                  wsUrl: tab.wsUrl!,
+                  key,
+                  delayMs: delayMs ?? undefined,
+                });
+                return res.json({ ok: true, targetId: tab.targetId });
+              } catch {
+                // CDP failed → Playwright fallback
+              }
+            }
+
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.pressKeyViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -155,6 +250,28 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "ref is required");
             }
             const timeoutMs = toNumber(body.timeoutMs);
+
+            // CDP fast path
+            if (useCdp) {
+              try {
+                await hoverViaCdp({
+                  wsUrl: tab.wsUrl!,
+                  ref,
+                  cdpUrl,
+                  targetId: tab.targetId,
+                });
+                return res.json({ ok: true, targetId: tab.targetId });
+              } catch (err) {
+                if (isRefValidationError(err)) {
+                  throw err;
+                }
+              }
+            }
+
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.hoverViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -169,6 +286,28 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "ref is required");
             }
             const timeoutMs = toNumber(body.timeoutMs);
+
+            // CDP fast path
+            if (useCdp) {
+              try {
+                await scrollIntoViewViaCdp({
+                  wsUrl: tab.wsUrl!,
+                  ref,
+                  cdpUrl,
+                  targetId: tab.targetId,
+                });
+                return res.json({ ok: true, targetId: tab.targetId });
+              } catch (err) {
+                if (isRefValidationError(err)) {
+                  throw err;
+                }
+              }
+            }
+
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             const scrollRequest: Parameters<typeof pw.scrollIntoViewViaPlaywright>[0] = {
               cdpUrl,
               targetId: tab.targetId,
@@ -180,6 +319,8 @@ export function registerBrowserAgentActRoutes(
             await pw.scrollIntoViewViaPlaywright(scrollRequest);
             return res.json({ ok: true, targetId: tab.targetId });
           }
+
+          // ── Playwright-only actions ────────────────────────────────────
           case "drag": {
             const startRef = toStringOrEmpty(body.startRef);
             const endRef = toStringOrEmpty(body.endRef);
@@ -187,6 +328,10 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "startRef and endRef are required");
             }
             const timeoutMs = toNumber(body.timeoutMs);
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.dragViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -203,6 +348,10 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "ref and values are required");
             }
             const timeoutMs = toNumber(body.timeoutMs);
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.selectOptionViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -240,6 +389,10 @@ export function registerBrowserAgentActRoutes(
               return jsonError(res, 400, "fields are required");
             }
             const timeoutMs = toNumber(body.timeoutMs);
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.fillFormViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -253,6 +406,10 @@ export function registerBrowserAgentActRoutes(
             const height = toNumber(body.height);
             if (!width || !height) {
               return jsonError(res, 400, "width and height are required");
+            }
+            const pw = await getPw();
+            if (!pw) {
+              return;
             }
             await pw.resizeViewportViaPlaywright({
               cdpUrl,
@@ -302,6 +459,10 @@ export function registerBrowserAgentActRoutes(
                 "wait requires at least one of: timeMs, text, textGone, selector, url, loadState, fn",
               );
             }
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.waitForViaPlaywright({
               cdpUrl,
               targetId: tab.targetId,
@@ -333,6 +494,10 @@ export function registerBrowserAgentActRoutes(
             }
             const ref = toStringOrEmpty(body.ref) || undefined;
             const evalTimeoutMs = toNumber(body.timeoutMs);
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             const evalRequest: Parameters<typeof pw.evaluateViaPlaywright>[0] = {
               cdpUrl,
               targetId: tab.targetId,
@@ -352,6 +517,10 @@ export function registerBrowserAgentActRoutes(
             });
           }
           case "close": {
+            const pw = await getPw();
+            if (!pw) {
+              return;
+            }
             await pw.closePageViaPlaywright({ cdpUrl, targetId: tab.targetId });
             return res.json({ ok: true, targetId: tab.targetId });
           }
